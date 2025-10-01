@@ -23,8 +23,45 @@ FORM NUMBER IDENTIFICATION - SIMPLE RULE:
 - Do not analyze, interpret, or consider any other numbers
 - This is typically a 4-digit number like 1344, 1320, etc.
 
-PAGE COUNT IDENTIFICATION - SIMPLE RULE
+FORM NUMBER CONFIDENCE RULE:
+- Report confidence level "High" ONLY IF:
+  • The form number appears on page 1 (first page)
+  • The form number appears in the top-left corner
+  • The form number appears on page 1 ONLY (not repeated on other pages)
+- Otherwise, ALWAYS report confidence level "Low"
+
+FORM TITLE IDENTIFICATION - SIMPLE RULE:
+• The form title is typically the main heading/title on page 1
+• Look for the most prominent Hebrew text near the top of the first page
+• This is usually below or near the form number
+
+FORM TITLE CONFIDENCE RULE:
+- Report confidence level "High" IF:
+  • The title is found prominently at the top of page 1
+  • The title appears to be the main heading of the document
+  • The title is clear and unambiguous
+- Report confidence level "Medium" IF:
+  • The title is found but not in the expected prominent location
+  • Multiple potential titles exist and one is most likely
+  • The title is partially clear but has some ambiguity
+- Report confidence level "Low" IF:
+  • The title is unclear or highly ambiguous
+  • Multiple competing titles with no clear primary
+  • The title cannot be confidently determined
+
+PAGE COUNT IDENTIFICATION - SIMPLE RULE:
 • Count the actual number of pages in the original PDF file visually, IGNORE what the text says - Some forms have misleading 'X out of Y' text.
+
+PAGE COUNT CONFIDENCE RULE:
+- Report confidence level "High" IF:
+  • Clear page numbers are visible on each page (e.g., "1 of 3", "2 of 3", etc.)
+  • Page count can be verified through explicit numbering
+- Report confidence level "Medium" IF:
+  • Pages are countable but no explicit page numbers shown
+  • Page count is determinable by visual inspection
+- Report confidence level "Low" IF:
+  • Page count is uncertain or ambiguous
+  • Cannot reliably determine the total number of pages
 
 Required Output Format
 You must respond with ONLY valid JSON in this exact structure:
@@ -32,32 +69,31 @@ You must respond with ONLY valid JSON in this exact structure:
   "form_classification": {
     "form_number": {
       "value": null,
-      "confidence_level": null,
+      "confidence_level": "High|Medium|Low",
       "reasoning": "",
       "extraction_location": "",
       "alternative_candidates": [],
       "form_number_validation": {
         "is_single_number": null,
-        "found_references_to_other_forms": [],
-        "primary_vs_reference_confidence": null
+        "found_references_to_other_forms": []
       }
     },
     "form_title": {
       "value": null,
-      "confidence_level": null,
+      "confidence_level": "High|Medium|Low",
       "reasoning": "",
       "extraction_location": "",
       "language": "hebrew"
     },
     "page_count": {
       "value": null,
-      "confidence_level": null,
+      "confidence_level": "High|Medium|Low",
       "reasoning": "",
       "extraction_method": ""
     }
   },
   "processing_metadata": {
-    "overall_confidence": null,
+    "overall_confidence": "High|Medium|Low",
     "processing_notes": "",
     "potential_issues": [],
     "recommended_human_review": false
@@ -67,12 +103,12 @@ You must respond with ONLY valid JSON in this exact structure:
 Important Instructions:
 1. JSON ONLY: Your entire response must be valid JSON. No additional text before or after. No explanations, no markdown formatting.
 2. Hebrew Text: Preserve all Hebrew text exactly as it appears - do not translate or modify
-3. Confidence Scoring: Be realistic - use 0.95 only if absolutely certain, 0.0 if completely uncertain
+3. Confidence Levels: Use only "High", "Medium", or "Low" - follow the specific rules for each field
 4. Alternative Candidates: Include other numbers that could be confused for the form number
-5. Human Review Flag: Set to true if confidence is below 70% or if you encounter significant ambiguity
-6. Form Number Priority: Always prioritize standalone form numbers, usually at the top left corner of the document over referenced forms in titles or subtitles
+5. Human Review Flag: Set to true if overall confidence is "Low" or if you encounter significant ambiguity
+6. Form Number Priority: Always prioritize standalone form numbers in the top-left corner of page 1
 7. CONSISTENCY: Always extract information in the same structured format, even if uncertain
-8. ACCURACY: If you cannot determine a field with reasonable confidence, use null instead of guessing
+8. ACCURACY: If you cannot determine a field with reasonable confidence, use null for the value and "Low" for confidence
 9. STRUCTURE: Follow the exact JSON structure provided - do not add, remove, or modify fields
 """
 

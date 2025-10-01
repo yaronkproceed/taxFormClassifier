@@ -33,7 +33,7 @@ class ClassificationResult:
     form_number: str
     form_title: str
     page_count: int
-    confidence: int
+    confidence: str  # Changed to string: "High", "Medium", or "Low"
     llm_response: Dict
     is_verified: bool
     token_usage: Dict
@@ -182,7 +182,7 @@ class FormClassifier:
             form_number = llm_response.get('form_classification', {}).get('form_number', {}).get('value', '')
             form_title = llm_response.get('form_classification', {}).get('form_title', {}).get('value', '')
             page_count = llm_response.get('form_classification', {}).get('page_count', {}).get('value', 0)
-            confidence = llm_response.get('form_classification', {}).get('form_number', {}).get('confidence_level', 0)
+            confidence = llm_response.get('form_classification', {}).get('form_number', {}).get('confidence_level', 'Low')
 
             is_verified = self._verify_classification(form_number, form_title, page_count)
 
@@ -267,7 +267,7 @@ class FormClassifier:
                 form_number="",
                 form_title="",
                 page_count=0,
-                confidence=0,
+                confidence="Low",
                 llm_response={},
                 is_verified=False,
                 token_usage={},
@@ -344,7 +344,7 @@ class FormClassifier:
                     form_number="",
                     form_title="",
                     page_count=0,
-                    confidence=0,
+                    confidence="Low",
                     llm_response={},
                     is_verified=False,
                     token_usage={},
@@ -543,8 +543,8 @@ class FormClassifier:
                         tr.append(td)
 
                         # Confidence (Type) with color coding
-                        conf_type = float(row[3]) if row[3] != "" else 0
-                        conf_class = "confidence-high" if conf_type >= 0.8 else "confidence-medium" if conf_type >= 0.6 else "confidence-low"
+                        conf_type = row[3].strip() if row[3] else "Low"
+                        conf_class = "confidence-high" if conf_type == "High" else "confidence-medium" if conf_type == "Medium" else "confidence-low"
                         td = soup.new_tag('td', **{'class': conf_class})
                         td.string = row[3]
                         tr.append(td)
@@ -555,8 +555,8 @@ class FormClassifier:
                         tr.append(td)
 
                         # Confidence (Title) with color coding
-                        conf_title = float(row[5]) if row[5] != "" else 0
-                        conf_class = "confidence-high" if conf_title >= 0.8 else "confidence-medium" if conf_title >= 0.6 else "confidence-low"
+                        conf_title = row[5].strip() if row[5] else "Low"
+                        conf_class = "confidence-high" if conf_title == "High" else "confidence-medium" if conf_title == "Medium" else "confidence-low"
                         td = soup.new_tag('td', **{'class': conf_class})
                         td.string = row[5]
                         tr.append(td)
@@ -567,8 +567,8 @@ class FormClassifier:
                         tr.append(td)
 
                         # Confidence (Pages) with color coding
-                        conf_pages = float(row[7]) if row[7] != "" else 0
-                        conf_class = "confidence-high" if conf_pages >= 0.8 else "confidence-medium" if conf_pages >= 0.6 else "confidence-low"
+                        conf_pages = row[7].strip() if row[7] else "Low"
+                        conf_class = "confidence-high" if conf_pages == "High" else "confidence-medium" if conf_pages == "Medium" else "confidence-low"
                         td = soup.new_tag('td', **{'class': conf_class})
                         td.string = row[7]
                         tr.append(td)
@@ -683,24 +683,24 @@ class FormClassifier:
                     f.write(f"<td>{row[2]}</td>")
 
                     # Confidence (Type) with color coding
-                    conf_type = float(row[3]) if row[3] != "" else 0
-                    conf_class = "confidence-high" if conf_type >= 0.8 else "confidence-medium" if conf_type >= 0.6 else "confidence-low"
+                    conf_type = row[3].strip() if row[3] else "Low"
+                    conf_class = "confidence-high" if conf_type == "High" else "confidence-medium" if conf_type == "Medium" else "confidence-low"
                     f.write(f"<td class='{conf_class}'>{row[3]}</td>")
 
                     # Title (handle Hebrew text)
                     f.write(f"<td style='max-width: 200px; word-wrap: break-word;'>{row[4]}</td>")
 
                     # Confidence (Title) with color coding
-                    conf_title = float(row[5]) if row[5] != "" else 0
-                    conf_class = "confidence-high" if conf_title >= 0.8 else "confidence-medium" if conf_title >= 0.6 else "confidence-low"
+                    conf_title = row[5].strip() if row[5] else "Low"
+                    conf_class = "confidence-high" if conf_title == "High" else "confidence-medium" if conf_title == "Medium" else "confidence-low"
                     f.write(f"<td class='{conf_class}'>{row[5]}</td>")
 
                     # Pages
                     f.write(f"<td>{row[6]}</td>")
 
                     # Confidence (Pages) with color coding
-                    conf_pages = float(row[7]) if row[7] != "" else 0
-                    conf_class = "confidence-high" if conf_pages >= 0.8 else "confidence-medium" if conf_pages >= 0.6 else "confidence-low"
+                    conf_pages = row[7].strip() if row[7] else "Low"
+                    conf_class = "confidence-high" if conf_pages == "High" else "confidence-medium" if conf_pages == "Medium" else "confidence-low"
                     f.write(f"<td class='{conf_class}'>{row[7]}</td>")
 
                     # Input tokens
@@ -727,12 +727,12 @@ class FormClassifier:
 
     <div style="margin-top: 20px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;">
         <strong>Instructions:</strong><br>
-        • <strong>Green rows</strong>: High confidence (≥80%)<br>
-        • <strong>Yellow rows</strong>: Medium confidence (60-79%)<br>
-        • <strong>Orange rows</strong>: Low confidence (<60%)<br>
+        • <strong>Green confidence cells</strong>: High confidence<br>
+        • <strong>Yellow confidence cells</strong>: Medium confidence<br>
+        • <strong>Orange confidence cells</strong>: Low confidence<br>
         • <strong>Green "Success"</strong>: Verified classification<br>
         • <strong>Red "Success"</strong>: Failed classification<br>
-        • <strong>Token counts</strong>: API usage (Input/Output tokens) in monospace font<br>
+        • <strong>Token counts</strong>: API usage (Input/Output tokens)<br>
         • <strong>Data Persistence</strong>: New runs append to existing data, never overwrite<br>
         • Hebrew text is preserved and displayed correctly
     </div>
