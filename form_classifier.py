@@ -15,6 +15,7 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from prompts import SYSTEM_PROMPT, USER_PROMPT
 from datetime import datetime
+from rapidfuzz import fuzz
 
 # Load environment variables
 load_dotenv()
@@ -23,7 +24,8 @@ load_dotenv()
 class FormConfig:
     """Configuration for expected form data"""
     form_number: str
-    expected_title: str
+    expected_title_1: str
+    expected_title_2: str
     expected_pages: int
 
 @dataclass
@@ -65,7 +67,8 @@ class FormClassifier:
             for item in config_data:
                 config = FormConfig(
                     form_number=item['form_number'],
-                    expected_title=item['expected_title'],
+                    expected_title_1=item['expected_title_1'],
+                    expected_title_2=item['expected_title_2'],
                     expected_pages=item['expected_pages']
                 )
                 configs[item['form_number']] = config
@@ -287,6 +290,7 @@ class FormClassifier:
     def _verify_classification(self, form_number: str, form_title: str, page_count: int) -> bool:
         """
         Verify classification against expected values
+        Uses dual title matching with both "contains" and fuzzy matching
 
         Args:
             form_number: Detected form number
@@ -300,8 +304,28 @@ class FormClassifier:
             return False
 
         expected = self.form_configs[form_number]
+        
+        # Normalize strings for comparison
+        extracted_title = form_title.strip()
+        expected_title_1 = expected.expected_title_1.strip()
+        expected_title_2 = expected.expected_title_2.strip()
 
-        title_match = expected.expected_title.strip() in form_title.strip()
+        # Method 1: "Contains" matching - check if either expected title is contained in extracted title
+        contains_match_1 = expected_title_1 in extracted_title
+        contains_match_2 = expected_title_2 in extracted_title
+        
+        # Method 2: Fuzzy matching - check if similarity is above 85% threshold
+        fuzzy_score_1 = fuzz.partial_ratio(expected_title_1, extracted_title)
+        fuzzy_score_2 = fuzz.partial_ratio(expected_title_2, extracted_title)
+        fuzzy_threshold = 85
+        
+        fuzzy_match_1 = fuzzy_score_1 >= fuzzy_threshold
+        fuzzy_match_2 = fuzzy_score_2 >= fuzzy_threshold
+        
+        # Title matches if EITHER title matches using EITHER method
+        title_match = contains_match_1 or contains_match_2 or fuzzy_match_1 or fuzzy_match_2
+        
+        # Page count must match exactly
         page_match = page_count == expected.expected_pages
 
         return title_match and page_match
@@ -458,7 +482,8 @@ class FormClassifier:
             expected_pages = ""
 
             if result.form_number in self.form_configs:
-                expected_title = self.form_configs[result.form_number].expected_title
+                # Display both expected titles separated by " OR "
+                expected_title = f"{self.form_configs[result.form_number].expected_title_1} OR {self.form_configs[result.form_number].expected_title_2}"
                 expected_pages = str(self.form_configs[result.form_number].expected_pages)
 
             # Extract values from llm_response

@@ -1,22 +1,26 @@
 [
     {
         "form_number": "1213",
-        "expected_title": "הודעה על פעולות שהן תכנון מס חייב בדיווח - מס הכנסה",
+        "expected_title_1": "הודעה על פעולות שהן תכנון מס חייב בדיווח - מס הכנסה",
+        "expected_title_2": "הודעה על פעולות שהן תכנון מס",
         "expected_pages": 3
     },
     {
         "form_number": "1320",
-        "expected_title": "חישוב ההכנסה החייבת מעסק או ממשלח יד",
+        "expected_title_1": "חישוב ההכנסה החייבת מעסק או ממשלח יד",
+        "expected_title_2": "חישוב ההכנסה החייבת",
         "expected_pages": 2
     },
     {
         "form_number": "1344",
-        "expected_title": "נספח לדוח השנתי (לטפסים 1301,1214)",
+        "expected_title_1": "נספח לדוח השנתי (לטפסים 1301,1214)",
+        "expected_title_2": "נספח לדוח השנתי",
         "expected_pages": 1
     },
     {
         "form_number": "1384",
-        "expected_title": "הצהרה על עסקה בין-לאומית",
+        "expected_title_1": "הצהרה על עסקה בין-לאומית",
+        "expected_title_2": "הצהרה על עסקה בין לאומית",
         "expected_pages": 1
     }
 ]
