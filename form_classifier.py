@@ -248,10 +248,9 @@ class FormClassifier:
             except Exception as inner_e:
                 error_details.append(f"Could not extract response details: {inner_e}")
 
-            # Try to get generation config details
+            # Try to get model details
             try:
                 error_details.append(f"Model Used: {model.model_name}")
-                error_details.append(f"Generation Config: temp={generation_config.temperature}, top_p={generation_config.top_p}, top_k={generation_config.top_k}")
             except:
                 pass
 
@@ -298,7 +297,7 @@ class FormClassifier:
         Verify classification against expected values with new multi-level matching
         
         Matching Priority:
-        1. Form Number Match (High confidence) - exact form number + title + page count
+        1. Form Number Match (High confidence) - exact form number + title match (page count ignored)
         2. Title Only Match (Medium confidence) - title matches any form in config
         3. Ambiguous - title matches multiple forms
         4. No Match
@@ -306,7 +305,7 @@ class FormClassifier:
         Args:
             form_number: Detected form number
             form_title: Detected form title
-            page_count: Detected page count
+            page_count: Detected page count (not used for verification - unreliable)
 
         Returns:
             Tuple of (is_verified, match_type, matched_title, matched_form_number)
@@ -342,14 +341,9 @@ class FormClassifier:
             # Check if title matches
             title_match = title_1_matches or title_2_matches
             
-            # Check page count (required for form number match)
-            page_match = page_count == expected.expected_pages
-            
-            # Form number match is verified only if title AND page count match
-            if title_match and page_match:
+            # Form number match is verified if title matches (page count ignored - unreliable)
+            if title_match:
                 return True, "Form Number", matched_title, form_number
-            elif title_match:  # Title matches but page count doesn't
-                return False, "Form Number (Page Mismatch)", matched_title, form_number
             else:  # Form number matches but title doesn't
                 return False, "Form Number (Title Mismatch)", None, form_number
         
