@@ -35,11 +35,13 @@ class ClassificationResult:
     form_number: str
     form_title: str
     page_count: int
-    confidence: str  # Changed to string: "High", "Medium", or "Low"
+    confidence: str  # AI's extraction confidence: "High", "Medium", or "Low"
     llm_response: Dict
     is_verified: bool
     token_usage: Dict
-    matched_title: Optional[str] = None  # "Title 1", "Title 2", "Both", or None
+    match_type: Optional[str] = None  # "Form Number", "Title Only", "Ambiguous", or None
+    matched_title: Optional[str] = None  # "Title 1", "Title 2", "Both", or "Title 1 (Form XXXX)"
+    matched_form_number: Optional[str] = None  # The form number from config that was matched
     error: Optional[str] = None
 
 class FormClassifier:
@@ -188,7 +190,7 @@ class FormClassifier:
             page_count = llm_response.get('form_classification', {}).get('page_count', {}).get('value', 0)
             confidence = llm_response.get('form_classification', {}).get('form_number', {}).get('confidence_level', 'Low')
 
-            is_verified, matched_title = self._verify_classification(form_number, form_title, page_count)
+            is_verified, match_type, matched_title, matched_form_number = self._verify_classification(form_number, form_title, page_count)
 
             return ClassificationResult(
                 filename=filename,
@@ -199,7 +201,9 @@ class FormClassifier:
                 llm_response=llm_response,
                 is_verified=is_verified,
                 token_usage=token_usage,
-                matched_title=matched_title
+                match_type=match_type,
+                matched_title=matched_title,
+                matched_form_number=matched_form_number
             )
 
         except Exception as e:
@@ -289,10 +293,15 @@ class FormClassifier:
                     print(f"Warning: Could not clean up file {filename}: {cleanup_error}")
                     # Don't raise the error, just log it
 
-    def _verify_classification(self, form_number: str, form_title: str, page_count: int) -> Tuple[bool, Optional[str]]:
+    def _verify_classification(self, form_number: str, form_title: str, page_count: int) -> Tuple[bool, Optional[str], Optional[str], Optional[str]]:
         """
-        Verify classification against expected values
-        Uses dual title matching with both "contains" and fuzzy matching
+        Verify classification against expected values with new multi-level matching
+        
+        Matching Priority:
+        1. Form Number Match (High confidence) - exact form number + title + page count
+        2. Title Only Match (Medium confidence) - title matches any form in config
+        3. Ambiguous - title matches multiple forms
+        4. No Match
 
         Args:
             form_number: Detected form number
@@ -300,53 +309,79 @@ class FormClassifier:
             page_count: Detected page count
 
         Returns:
-            Tuple of (is_verified, matched_title)
-            - is_verified: True if classification is verified
-            - matched_title: "Title 1", "Title 2", "Both", or None
+            Tuple of (is_verified, match_type, matched_title, matched_form_number)
         """
-        if form_number not in self.form_configs:
-            return False, None
-
-        expected = self.form_configs[form_number]
-        
-        # Normalize strings for comparison
         extracted_title = form_title.strip()
-        expected_title_1 = expected.expected_title_1.strip()
-        expected_title_2 = expected.expected_title_2.strip()
-
-        # Method 1: "Contains" matching - check if either expected title is contained in extracted title
-        contains_match_1 = expected_title_1 in extracted_title
-        contains_match_2 = expected_title_2 in extracted_title
-        
-        # Method 2: Fuzzy matching - check if similarity is above 85% threshold
-        fuzzy_score_1 = fuzz.partial_ratio(expected_title_1, extracted_title)
-        fuzzy_score_2 = fuzz.partial_ratio(expected_title_2, extracted_title)
         fuzzy_threshold = 85
         
-        fuzzy_match_1 = fuzzy_score_1 >= fuzzy_threshold
-        fuzzy_match_2 = fuzzy_score_2 >= fuzzy_threshold
+        # Helper function to check if a title matches using contains or fuzzy matching
+        def titles_match(expected_title: str, extracted_title: str) -> bool:
+            expected = expected_title.strip()
+            contains_match = expected in extracted_title
+            fuzzy_match = fuzz.partial_ratio(expected, extracted_title) >= fuzzy_threshold
+            return contains_match or fuzzy_match
         
-        # Determine which title(s) matched
-        title_1_matches = contains_match_1 or fuzzy_match_1
-        title_2_matches = contains_match_2 or fuzzy_match_2
+        # (1) Try Form Number Match First (Highest Priority)
+        if form_number in self.form_configs:
+            expected = self.form_configs[form_number]
+            
+            # Check which title(s) match
+            title_1_matches = titles_match(expected.expected_title_1, extracted_title)
+            title_2_matches = titles_match(expected.expected_title_2, extracted_title)
+            
+            # Determine matched_title string
+            if title_1_matches and title_2_matches:
+                matched_title = "Both"
+            elif title_1_matches:
+                matched_title = "Title 1"
+            elif title_2_matches:
+                matched_title = "Title 2"
+            else:
+                matched_title = None
+            
+            # Check if title matches
+            title_match = title_1_matches or title_2_matches
+            
+            # Check page count (required for form number match)
+            page_match = page_count == expected.expected_pages
+            
+            # Form number match is verified only if title AND page count match
+            if title_match and page_match:
+                return True, "Form Number", matched_title, form_number
+            elif title_match:  # Title matches but page count doesn't
+                return False, "Form Number (Page Mismatch)", matched_title, form_number
+            else:  # Form number matches but title doesn't
+                return False, "Form Number (Title Mismatch)", None, form_number
         
-        # Determine matched_title string
-        if title_1_matches and title_2_matches:
-            matched_title = "Both"
-        elif title_1_matches:
-            matched_title = "Title 1"
-        elif title_2_matches:
-            matched_title = "Title 2"
+        # (2) Try Title-Only Match (Medium Priority)
+        # Search all forms in config for title match
+        title_matches = []
+        
+        for config_form_number, config in self.form_configs.items():
+            title_1_matches = titles_match(config.expected_title_1, extracted_title)
+            title_2_matches = titles_match(config.expected_title_2, extracted_title)
+            
+            if title_1_matches or title_2_matches:
+                which_title = "Both" if (title_1_matches and title_2_matches) else ("Title 1" if title_1_matches else "Title 2")
+                title_matches.append({
+                    'form_number': config_form_number,
+                    'which_title': which_title
+                })
+        
+        # (3) Check results
+        if len(title_matches) == 0:
+            # No match at all
+            return False, None, None, None
+        elif len(title_matches) == 1:
+            # Single title match - Medium confidence (ignore page count per your requirement)
+            match = title_matches[0]
+            matched_title = f"{match['which_title']} (Form {match['form_number']})"
+            return True, "Title Only", matched_title, match['form_number']
         else:
-            matched_title = None
-        
-        # Title matches if EITHER title matches using EITHER method
-        title_match = title_1_matches or title_2_matches
-        
-        # Page count must match exactly
-        page_match = page_count == expected.expected_pages
-
-        return (title_match and page_match), matched_title
+            # Multiple title matches - Ambiguous
+            form_numbers = ", ".join([m['form_number'] for m in title_matches])
+            matched_title = f"Ambiguous: {form_numbers}"
+            return False, "Ambiguous", matched_title, None
 
     def process_folder(self, folder_path: str) -> List[ClassificationResult]:
         """
@@ -414,7 +449,9 @@ class FormClassifier:
                 "page_count": result.page_count,
                 "confidence": result.confidence,
                 "is_verified": result.is_verified,
+                "match_type": result.match_type,
                 "matched_title": result.matched_title,
+                "matched_form_number": result.matched_form_number,
                 "token_usage": result.token_usage,
                 "llm_response": result.llm_response,
                 "error": result.error
@@ -436,7 +473,7 @@ class FormClassifier:
         # Read existing stats if file exists
         existing_rows = []
         headers = [
-            "File Name", "Date", "Form Type", "Conf (Type)", "Title", "Matched Title", "Conf (Title)",
+            "File Name", "Date", "Form Type", "Conf (Type)", "Title", "Match Type", "Matched Title", "Matched Form", "Conf (Title)",
             "Pages", "Conf (Pages)", "Input Tokens", "Output Tokens", "Expected Title", "Expected Pages", "Success"
         ]
 
@@ -523,7 +560,9 @@ class FormClassifier:
                 result.form_number,
                 str(form_type_conf),
                 result.form_title,
+                result.match_type if result.match_type else "-",
                 result.matched_title if result.matched_title else "-",
+                result.matched_form_number if result.matched_form_number else "-",
                 str(title_conf),
                 str(result.page_count),
                 str(pages_conf),
@@ -599,55 +638,65 @@ class FormClassifier:
                         td.string = row[4]
                         tr.append(td)
 
-                        # Matched Title
+                        # Match Type
                         td = soup.new_tag('td')
                         td.string = row[5]
                         tr.append(td)
 
-                        # Confidence (Title) with color coding
-                        conf_title = row[6].strip() if row[6] else "Low"
-                        conf_class = "confidence-high" if conf_title == "High" else "confidence-medium" if conf_title == "Medium" else "confidence-low"
-                        td = soup.new_tag('td', **{'class': conf_class})
+                        # Matched Title
+                        td = soup.new_tag('td')
                         td.string = row[6]
                         tr.append(td)
 
-                        # Pages
+                        # Matched Form Number
                         td = soup.new_tag('td')
                         td.string = row[7]
                         tr.append(td)
 
-                        # Confidence (Pages) with color coding
-                        conf_pages = row[8].strip() if row[8] else "Low"
-                        conf_class = "confidence-high" if conf_pages == "High" else "confidence-medium" if conf_pages == "Medium" else "confidence-low"
+                        # Confidence (Title) with color coding
+                        conf_title = row[8].strip() if row[8] else "Low"
+                        conf_class = "confidence-high" if conf_title == "High" else "confidence-medium" if conf_title == "Medium" else "confidence-low"
                         td = soup.new_tag('td', **{'class': conf_class})
                         td.string = row[8]
                         tr.append(td)
 
-                        # Input tokens
+                        # Pages
                         td = soup.new_tag('td')
                         td.string = row[9]
                         tr.append(td)
 
-                        # Output tokens
-                        td = soup.new_tag('td')
+                        # Confidence (Pages) with color coding
+                        conf_pages = row[10].strip() if row[10] else "Low"
+                        conf_class = "confidence-high" if conf_pages == "High" else "confidence-medium" if conf_pages == "Medium" else "confidence-low"
+                        td = soup.new_tag('td', **{'class': conf_class})
                         td.string = row[10]
                         tr.append(td)
 
-                        # Expected title (handle Hebrew text)
-                        td = soup.new_tag('td', style='max-width: 200px; word-wrap: break-word;')
+                        # Input tokens
+                        td = soup.new_tag('td')
                         td.string = row[11]
                         tr.append(td)
 
-                        # Expected pages
+                        # Output tokens
                         td = soup.new_tag('td')
                         td.string = row[12]
                         tr.append(td)
 
+                        # Expected title (handle Hebrew text)
+                        td = soup.new_tag('td', style='max-width: 200px; word-wrap: break-word;')
+                        td.string = row[13]
+                        tr.append(td)
+
+                        # Expected pages
+                        td = soup.new_tag('td')
+                        td.string = row[14]
+                        tr.append(td)
+
                         # Success with color coding
-                        success_class = "success-yes" if row[13] == "Yes" else "success-no"
+                        success_class = "success-yes" if row[15] == "Yes" else "success-no"
                         td = soup.new_tag('td', **{'class': success_class})
                         strong = soup.new_tag('strong')
-                        strong.string = row[13]
+                        strong.string = row[15]
                         td.append(strong)
                         tr.append(td)
 
@@ -740,37 +789,43 @@ class FormClassifier:
                     # Title (handle Hebrew text)
                     f.write(f"<td style='max-width: 200px; word-wrap: break-word;'>{row[4]}</td>")
 
-                    # Matched Title
+                    # Match Type
                     f.write(f"<td>{row[5]}</td>")
 
-                    # Confidence (Title) with color coding
-                    conf_title = row[6].strip() if row[6] else "Low"
-                    conf_class = "confidence-high" if conf_title == "High" else "confidence-medium" if conf_title == "Medium" else "confidence-low"
-                    f.write(f"<td class='{conf_class}'>{row[6]}</td>")
+                    # Matched Title
+                    f.write(f"<td>{row[6]}</td>")
 
-                    # Pages
+                    # Matched Form Number
                     f.write(f"<td>{row[7]}</td>")
 
-                    # Confidence (Pages) with color coding
-                    conf_pages = row[8].strip() if row[8] else "Low"
-                    conf_class = "confidence-high" if conf_pages == "High" else "confidence-medium" if conf_pages == "Medium" else "confidence-low"
+                    # Confidence (Title) with color coding
+                    conf_title = row[8].strip() if row[8] else "Low"
+                    conf_class = "confidence-high" if conf_title == "High" else "confidence-medium" if conf_title == "Medium" else "confidence-low"
                     f.write(f"<td class='{conf_class}'>{row[8]}</td>")
 
-                    # Input tokens
+                    # Pages
                     f.write(f"<td>{row[9]}</td>")
 
+                    # Confidence (Pages) with color coding
+                    conf_pages = row[10].strip() if row[10] else "Low"
+                    conf_class = "confidence-high" if conf_pages == "High" else "confidence-medium" if conf_pages == "Medium" else "confidence-low"
+                    f.write(f"<td class='{conf_class}'>{row[10]}</td>")
+
+                    # Input tokens
+                    f.write(f"<td>{row[11]}</td>")
+
                     # Output tokens
-                    f.write(f"<td>{row[10]}</td>")
-
-                    # Expected title (handle Hebrew text)
-                    f.write(f"<td style='max-width: 200px; word-wrap: break-word;'>{row[11]}</td>")
-
-                    # Expected pages
                     f.write(f"<td>{row[12]}</td>")
 
+                    # Expected title (handle Hebrew text)
+                    f.write(f"<td style='max-width: 200px; word-wrap: break-word;'>{row[13]}</td>")
+
+                    # Expected pages
+                    f.write(f"<td>{row[14]}</td>")
+
                     # Success with color coding
-                    success_class = "success-yes" if row[13] == "Yes" else "success-no"
-                    f.write(f"<td class='{success_class}'><strong>{row[13]}</strong></td>")
+                    success_class = "success-yes" if row[15] == "Yes" else "success-no"
+                    f.write(f"<td class='{success_class}'><strong>{row[15]}</strong></td>")
 
                     f.write("</tr>")
 
