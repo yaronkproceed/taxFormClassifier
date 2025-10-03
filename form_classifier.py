@@ -39,6 +39,7 @@ class ClassificationResult:
     llm_response: Dict
     is_verified: bool
     token_usage: Dict
+    matched_title: Optional[str] = None  # "Title 1", "Title 2", "Both", or None
     error: Optional[str] = None
 
 class FormClassifier:
@@ -187,7 +188,7 @@ class FormClassifier:
             page_count = llm_response.get('form_classification', {}).get('page_count', {}).get('value', 0)
             confidence = llm_response.get('form_classification', {}).get('form_number', {}).get('confidence_level', 'Low')
 
-            is_verified = self._verify_classification(form_number, form_title, page_count)
+            is_verified, matched_title = self._verify_classification(form_number, form_title, page_count)
 
             return ClassificationResult(
                 filename=filename,
@@ -197,7 +198,8 @@ class FormClassifier:
                 confidence=confidence,
                 llm_response=llm_response,
                 is_verified=is_verified,
-                token_usage=token_usage
+                token_usage=token_usage,
+                matched_title=matched_title
             )
 
         except Exception as e:
@@ -287,7 +289,7 @@ class FormClassifier:
                     print(f"Warning: Could not clean up file {filename}: {cleanup_error}")
                     # Don't raise the error, just log it
 
-    def _verify_classification(self, form_number: str, form_title: str, page_count: int) -> bool:
+    def _verify_classification(self, form_number: str, form_title: str, page_count: int) -> Tuple[bool, Optional[str]]:
         """
         Verify classification against expected values
         Uses dual title matching with both "contains" and fuzzy matching
@@ -298,10 +300,12 @@ class FormClassifier:
             page_count: Detected page count
 
         Returns:
-            True if classification is verified
+            Tuple of (is_verified, matched_title)
+            - is_verified: True if classification is verified
+            - matched_title: "Title 1", "Title 2", "Both", or None
         """
         if form_number not in self.form_configs:
-            return False
+            return False, None
 
         expected = self.form_configs[form_number]
         
@@ -322,13 +326,27 @@ class FormClassifier:
         fuzzy_match_1 = fuzzy_score_1 >= fuzzy_threshold
         fuzzy_match_2 = fuzzy_score_2 >= fuzzy_threshold
         
+        # Determine which title(s) matched
+        title_1_matches = contains_match_1 or fuzzy_match_1
+        title_2_matches = contains_match_2 or fuzzy_match_2
+        
+        # Determine matched_title string
+        if title_1_matches and title_2_matches:
+            matched_title = "Both"
+        elif title_1_matches:
+            matched_title = "Title 1"
+        elif title_2_matches:
+            matched_title = "Title 2"
+        else:
+            matched_title = None
+        
         # Title matches if EITHER title matches using EITHER method
-        title_match = contains_match_1 or contains_match_2 or fuzzy_match_1 or fuzzy_match_2
+        title_match = title_1_matches or title_2_matches
         
         # Page count must match exactly
         page_match = page_count == expected.expected_pages
 
-        return title_match and page_match
+        return (title_match and page_match), matched_title
 
     def process_folder(self, folder_path: str) -> List[ClassificationResult]:
         """
@@ -396,6 +414,7 @@ class FormClassifier:
                 "page_count": result.page_count,
                 "confidence": result.confidence,
                 "is_verified": result.is_verified,
+                "matched_title": result.matched_title,
                 "token_usage": result.token_usage,
                 "llm_response": result.llm_response,
                 "error": result.error
@@ -417,7 +436,7 @@ class FormClassifier:
         # Read existing stats if file exists
         existing_rows = []
         headers = [
-            "File Name", "Date", "Form Type", "Conf (Type)", "Title", "Conf (Title)",
+            "File Name", "Date", "Form Type", "Conf (Type)", "Title", "Matched Title", "Conf (Title)",
             "Pages", "Conf (Pages)", "Input Tokens", "Output Tokens", "Expected Title", "Expected Pages", "Success"
         ]
 
@@ -504,6 +523,7 @@ class FormClassifier:
                 result.form_number,
                 str(form_type_conf),
                 result.form_title,
+                result.matched_title if result.matched_title else "-",
                 str(title_conf),
                 str(result.page_count),
                 str(pages_conf),
@@ -579,50 +599,55 @@ class FormClassifier:
                         td.string = row[4]
                         tr.append(td)
 
+                        # Matched Title
+                        td = soup.new_tag('td')
+                        td.string = row[5]
+                        tr.append(td)
+
                         # Confidence (Title) with color coding
-                        conf_title = row[5].strip() if row[5] else "Low"
+                        conf_title = row[6].strip() if row[6] else "Low"
                         conf_class = "confidence-high" if conf_title == "High" else "confidence-medium" if conf_title == "Medium" else "confidence-low"
                         td = soup.new_tag('td', **{'class': conf_class})
-                        td.string = row[5]
+                        td.string = row[6]
                         tr.append(td)
 
                         # Pages
                         td = soup.new_tag('td')
-                        td.string = row[6]
+                        td.string = row[7]
                         tr.append(td)
 
                         # Confidence (Pages) with color coding
-                        conf_pages = row[7].strip() if row[7] else "Low"
+                        conf_pages = row[8].strip() if row[8] else "Low"
                         conf_class = "confidence-high" if conf_pages == "High" else "confidence-medium" if conf_pages == "Medium" else "confidence-low"
                         td = soup.new_tag('td', **{'class': conf_class})
-                        td.string = row[7]
+                        td.string = row[8]
                         tr.append(td)
 
                         # Input tokens
                         td = soup.new_tag('td')
-                        td.string = row[8]
+                        td.string = row[9]
                         tr.append(td)
 
                         # Output tokens
                         td = soup.new_tag('td')
-                        td.string = row[9]
+                        td.string = row[10]
                         tr.append(td)
 
                         # Expected title (handle Hebrew text)
                         td = soup.new_tag('td', style='max-width: 200px; word-wrap: break-word;')
-                        td.string = row[10]
+                        td.string = row[11]
                         tr.append(td)
 
                         # Expected pages
                         td = soup.new_tag('td')
-                        td.string = row[11]
+                        td.string = row[12]
                         tr.append(td)
 
                         # Success with color coding
-                        success_class = "success-yes" if row[12] == "Yes" else "success-no"
+                        success_class = "success-yes" if row[13] == "Yes" else "success-no"
                         td = soup.new_tag('td', **{'class': success_class})
                         strong = soup.new_tag('strong')
-                        strong.string = row[12]
+                        strong.string = row[13]
                         td.append(strong)
                         tr.append(td)
 
@@ -715,34 +740,37 @@ class FormClassifier:
                     # Title (handle Hebrew text)
                     f.write(f"<td style='max-width: 200px; word-wrap: break-word;'>{row[4]}</td>")
 
+                    # Matched Title
+                    f.write(f"<td>{row[5]}</td>")
+
                     # Confidence (Title) with color coding
-                    conf_title = row[5].strip() if row[5] else "Low"
+                    conf_title = row[6].strip() if row[6] else "Low"
                     conf_class = "confidence-high" if conf_title == "High" else "confidence-medium" if conf_title == "Medium" else "confidence-low"
-                    f.write(f"<td class='{conf_class}'>{row[5]}</td>")
+                    f.write(f"<td class='{conf_class}'>{row[6]}</td>")
 
                     # Pages
-                    f.write(f"<td>{row[6]}</td>")
+                    f.write(f"<td>{row[7]}</td>")
 
                     # Confidence (Pages) with color coding
-                    conf_pages = row[7].strip() if row[7] else "Low"
+                    conf_pages = row[8].strip() if row[8] else "Low"
                     conf_class = "confidence-high" if conf_pages == "High" else "confidence-medium" if conf_pages == "Medium" else "confidence-low"
-                    f.write(f"<td class='{conf_class}'>{row[7]}</td>")
+                    f.write(f"<td class='{conf_class}'>{row[8]}</td>")
 
                     # Input tokens
-                    f.write(f"<td>{row[8]}</td>")
-
-                    # Output tokens
                     f.write(f"<td>{row[9]}</td>")
 
+                    # Output tokens
+                    f.write(f"<td>{row[10]}</td>")
+
                     # Expected title (handle Hebrew text)
-                    f.write(f"<td style='max-width: 200px; word-wrap: break-word;'>{row[10]}</td>")
+                    f.write(f"<td style='max-width: 200px; word-wrap: break-word;'>{row[11]}</td>")
 
                     # Expected pages
-                    f.write(f"<td>{row[11]}</td>")
+                    f.write(f"<td>{row[12]}</td>")
 
                     # Success with color coding
-                    success_class = "success-yes" if row[12] == "Yes" else "success-no"
-                    f.write(f"<td class='{success_class}'><strong>{row[12]}</strong></td>")
+                    success_class = "success-yes" if row[13] == "Yes" else "success-no"
+                    f.write(f"<td class='{success_class}'><strong>{row[13]}</strong></td>")
 
                     f.write("</tr>")
 
