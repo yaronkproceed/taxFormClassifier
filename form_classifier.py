@@ -223,10 +223,10 @@ class FormClassifier:
                             error_details.append(f"Candidate {i}: finish_reason={finish_reason}")
 
                             if finish_reason == 2:  # SAFETY
-                                error_details.append(f"  🔒 SAFETY FILTER TRIGGERED - This is likely due to PII detection")
-                                error_details.append(f"  💡 Current safety settings: BLOCK_NONE (all filters disabled)")
-                                error_details.append(f"  💡 If still blocked: The content may violate API terms of service at infrastructure level")
-                                error_details.append(f"  💡 Solution: Check PDF for content that violates Gemini API terms:")
+                                error_details.append(f"  SAFETY FILTER TRIGGERED - This is likely due to PII detection")
+                                error_details.append(f"  NOTE: Current safety settings: BLOCK_NONE (all filters disabled)")
+                                error_details.append(f"  NOTE: If still blocked: The content may violate API terms of service at infrastructure level")
+                                error_details.append(f"  NOTE: Solution: Check PDF for content that violates Gemini API terms:")
                                 error_details.append(f"       • Malicious or harmful content")
                                 error_details.append(f"       • Inappropriate images or text")
                                 error_details.append(f"       • Content against API policies")
@@ -259,7 +259,7 @@ class FormClassifier:
             # Format the complete error report
             detailed_error = "\n".join([f"  {line}" for line in error_details])
 
-            print(f"🚨 DETAILED ERROR REPORT for {filename}:")
+            print(f"DETAILED ERROR REPORT for {filename}:")
             print("=" * 60)
             for line in error_details:
                 print(f"  {line}")
@@ -638,7 +638,7 @@ class FormClassifier:
 
                         # Use prettify() instead of str() for better HTML formatting
                         f.write(soup.prettify())
-                        print(f"✅ Successfully updated existing HTML file with {len(all_rows)} total rows")
+                        print(f"Successfully updated existing HTML file with {len(all_rows)} total rows")
                     except Exception as write_error:
                         print(f"Error writing HTML file: {write_error}")
                         print("Attempting to recreate HTML file from scratch...")
