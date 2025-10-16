@@ -1,0 +1,1 @@
+python form_classifier.py TestFolder form_config.json results_testfolder.json

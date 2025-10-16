@@ -89,22 +89,79 @@ class FormClassifier:
 
     def load_pdf_file(self, pdf_path: str):
         """
-        Load PDF file for Gemini upload
+        Load PDF file as inline data (bypasses File API)
 
         Args:
             pdf_path: Path to PDF file
 
         Returns:
-            File object ready for upload
+            Dict with mime_type and binary data for inline upload
         """
         try:
-            return genai.upload_file(pdf_path)
+            import mimetypes
+            with open(pdf_path, 'rb') as f:
+                pdf_data = f.read()
+            
+            mime_type = mimetypes.guess_type(pdf_path)[0] or 'application/pdf'
+            
+            return {
+                'mime_type': mime_type,
+                'data': pdf_data
+            }
         except Exception as e:
             raise ValueError(f"Error loading PDF file {pdf_path}: {e}")
 
     def classify_form(self, pdf_path: str, filename: str) -> ClassificationResult:
         """
-        Classify a form using Gemini
+        Classify a form using Gemini with automatic retry on safety filter errors
+
+        Args:
+            pdf_path: Path to PDF file
+            filename: Original filename for reference
+
+        Returns:
+            ClassificationResult object
+        """
+        max_attempts = 3
+        last_result = None
+        
+        for attempt in range(1, max_attempts + 1):
+            if attempt > 1:
+                import time
+                print(f"  Retry attempt {attempt}/{max_attempts} for {filename}...")
+                time.sleep(2)  # Wait 2 seconds between retries
+            
+            result = self._classify_form_single_attempt(pdf_path, filename)
+            
+            # Check if result has an error
+            if result.error:
+                last_result = result
+                # Check if this is a safety filter error (worth retrying)
+                error_str = result.error
+                is_safety_filter = (
+                    'finish_reason=2' in error_str or 
+                    'SAFETY FILTER TRIGGERED' in error_str or
+                    'blocked' in error_str.lower()
+                )
+                
+                if is_safety_filter and attempt < max_attempts:
+                    print(f"  Safety filter triggered on attempt {attempt}, retrying...")
+                    continue
+                else:
+                    # Not a safety filter error, or max attempts reached
+                    return result
+            else:
+                # Success! Return the result
+                if attempt > 1:
+                    print(f"  Success on attempt {attempt}!")
+                return result
+        
+        # If we get here, all attempts failed - return the last result with error
+        return last_result
+    
+    def _classify_form_single_attempt(self, pdf_path: str, filename: str) -> ClassificationResult:
+        """
+        Single classification attempt (called by classify_form with retry logic)
 
         Args:
             pdf_path: Path to PDF file
@@ -117,7 +174,7 @@ class FormClassifier:
         system_prompt = SYSTEM_PROMPT
         user_prompt = USER_PROMPT
         
-        uploaded_file = None  # Track uploaded file for cleanup
+        pdf_data = None  # Track PDF data for inline upload
 
         try:
             # Define safety settings to reduce sensitivity to PII in forms
@@ -134,12 +191,12 @@ class FormClassifier:
                 safety_settings=safety_settings
             )
 
-            # Upload the PDF file
-            uploaded_file = self.load_pdf_file(pdf_path)
+            # Load the PDF file as inline data
+            pdf_data = self.load_pdf_file(pdf_path)
 
-            # Generate content with the uploaded file
+            # Generate content with the inline PDF data
             response = model.generate_content(
-                [system_prompt, uploaded_file, user_prompt],
+                [system_prompt, pdf_data, user_prompt],
                 generation_config=genai.types.GenerationConfig(
                     temperature=1,         # Minimum temperature for maximum consistency
                     top_p=0.95,               # Nucleus sampling for focused output
@@ -257,7 +314,7 @@ class FormClassifier:
             # Try to get file upload info
             try:
                 error_details.append(f"File: {pdf_path}")
-                error_details.append(f"Uploaded File: {uploaded_file.name if uploaded_file else 'None'}")
+                error_details.append(f"PDF Data: {'Loaded' if pdf_data else 'None'}")
             except:
                 pass
 
@@ -283,14 +340,8 @@ class FormClassifier:
             )
         
         finally:
-            # Clean up the uploaded file to prevent carryover between files
-            if uploaded_file:
-                try:
-                    genai.delete_file(uploaded_file.name)
-                    print(f"Cleaned up uploaded file for {filename}")
-                except Exception as cleanup_error:
-                    print(f"Warning: Could not clean up file {filename}: {cleanup_error}")
-                    # Don't raise the error, just log it
+            # No cleanup needed for inline data (not using File API)
+            pass
 
     def _verify_classification(self, form_number: str, form_title: str, page_count: int) -> Tuple[bool, Optional[str], Optional[str], Optional[str]]:
         """
@@ -531,10 +582,13 @@ class FormClassifier:
             expected_title = ""
             expected_pages = ""
 
-            if result.form_number in self.form_configs:
+            # Use matched_form_number (the actual matched form) instead of form_number (LLM-extracted)
+            form_to_lookup = result.matched_form_number if result.matched_form_number else result.form_number
+            
+            if form_to_lookup and form_to_lookup in self.form_configs:
                 # Display both expected titles separated by " OR "
-                expected_title = f"{self.form_configs[result.form_number].expected_title_1} OR {self.form_configs[result.form_number].expected_title_2}"
-                expected_pages = str(self.form_configs[result.form_number].expected_pages)
+                expected_title = f"{self.form_configs[form_to_lookup].expected_title_1} OR {self.form_configs[form_to_lookup].expected_title_2}"
+                expected_pages = str(self.form_configs[form_to_lookup].expected_pages)
 
             # Extract values from llm_response
             llm_data = result.llm_response.get('form_classification', {})
